@@ -1,19 +1,24 @@
 use crate::DBUS_METHOD_CALL_TIMEOUT;
+use backoff::future::retry;
+use backoff::ExponentialBackoff;
 use bluez_generated::{OrgBluezAdapter1, OrgBluezDevice1, OrgBluezGattCharacteristic1};
 use core::fmt::Debug;
 use core::future::Future;
 use dbus::arg::{RefArg, Variant};
 use dbus::nonblock::stdintf::org_freedesktop_dbus::ObjectManager;
 use dbus::nonblock::{Proxy, SyncConnection};
-use futures::FutureExt;
+use futures::{FutureExt, TryFutureExt};
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 use thiserror::Error;
 use tokio::task::JoinError;
+
+const READ_WRITE_RETRY_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// An error carrying out a Bluetooth operation.
 #[derive(Debug, Error)]
@@ -243,7 +248,14 @@ impl BluetoothSession {
         characteristic_path: &str,
     ) -> Result<Vec<u8>, BluetoothError> {
         let characteristic = self.get_characteristic_proxy(id, characteristic_path);
-        Ok(characteristic.read_value(HashMap::new()).await?)
+        let mut backoff = ExponentialBackoff::default();
+        backoff.max_elapsed_time = Some(READ_WRITE_RETRY_TIMEOUT);
+        Ok(retry(backoff, || {
+            characteristic
+                .read_value(HashMap::new())
+                .map_err(Into::into)
+        })
+        .await?)
     }
 
     // TODO: Change this to lookup the path from the UUIDs instead.
@@ -256,9 +268,16 @@ impl BluetoothSession {
         value: impl Into<Vec<u8>>,
     ) -> Result<(), BluetoothError> {
         let characteristic = self.get_characteristic_proxy(id, characteristic_path);
-        Ok(characteristic
-            .write_value(value.into(), HashMap::new())
-            .await?)
+        let mut backoff = ExponentialBackoff::default();
+        backoff.max_elapsed_time = Some(READ_WRITE_RETRY_TIMEOUT);
+        let value: Vec<u8> = value.into();
+        let value = &value;
+        Ok(retry(backoff, || {
+            characteristic
+                .write_value(value.to_owned(), HashMap::new())
+                .map_err(Into::into)
+        })
+        .await?)
     }
 
     /// Start notifications on the characteristic of the given device with the given path. The path
@@ -269,7 +288,12 @@ impl BluetoothSession {
         characteristic_path: &str,
     ) -> Result<(), BluetoothError> {
         let characteristic = self.get_characteristic_proxy(id, characteristic_path);
-        characteristic.start_notify().await?;
+        let mut backoff = ExponentialBackoff::default();
+        backoff.max_elapsed_time = Some(READ_WRITE_RETRY_TIMEOUT);
+        retry(backoff, || {
+            characteristic.start_notify().map_err(Into::into)
+        })
+        .await?;
         Ok(())
     }
 
@@ -281,7 +305,9 @@ impl BluetoothSession {
         characteristic_path: &str,
     ) -> Result<(), BluetoothError> {
         let characteristic = self.get_characteristic_proxy(id, characteristic_path);
-        characteristic.stop_notify().await?;
+        let mut backoff = ExponentialBackoff::default();
+        backoff.max_elapsed_time = Some(READ_WRITE_RETRY_TIMEOUT);
+        retry(backoff, || characteristic.stop_notify().map_err(Into::into)).await?;
         Ok(())
     }
 

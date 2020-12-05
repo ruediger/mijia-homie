@@ -1,6 +1,7 @@
 #![type_length_limit = "1138969"]
 
-use backoff::{future::FutureOperation, ExponentialBackoff};
+use backoff::future::retry;
+use backoff::ExponentialBackoff;
 use futures::stream::StreamExt;
 use futures::TryFutureExt;
 use homie_device::{HomieDevice, Node, Property};
@@ -409,10 +410,9 @@ async fn connect_and_subscribe_sensor_or_disconnect<'a>(
     let mut backoff = ExponentialBackoff::default();
     backoff.max_elapsed_time = Some(SENSOR_CONNECT_RETRY_TIMEOUT);
 
-    FutureOperation::retry(
-        || session.start_notify_sensor(id).map_err(Into::into),
-        backoff,
-    )
+    retry(backoff, || {
+        session.start_notify_sensor(id).map_err(Into::into)
+    })
     .or_else(|e| async {
         session
             .bt_session

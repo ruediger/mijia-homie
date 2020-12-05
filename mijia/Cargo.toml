@@ -10,6 +10,7 @@ keywords = ["blue", "bluetooth"]
 categories = ["hardware-support"]
 
 [dependencies]
+backoff = { version = "0.2.1", features = ["tokio"] }
 bluez-generated = { version = "0.2.0", path = "../bluez-generated" }
 dbus = { version = "0.9.0", features = ["futures"] }
 dbus-tokio = "0.6.0"
